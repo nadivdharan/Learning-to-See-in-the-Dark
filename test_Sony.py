@@ -3,13 +3,16 @@
 from __future__ import division
 import os, scipy.io
 import tensorflow as tf
-import tensorflow.contrib.slim as slim
+#import tensorflow.contrib.slim as slim
+import tf_slim as slim
 import numpy as np
 import rawpy
 import glob
 
-input_dir = './dataset/Sony/short/'
-gt_dir = './dataset/Sony/long/'
+# input_dir = './dataset/Sony/short/'
+# gt_dir = './dataset/Sony/long/'
+input_dir = '/data/data/datasets/SID/Sony/short/'
+gt_dir = '/data/data/datasets/SID/Sony/long/'
 checkpoint_dir = './checkpoint/Sony/'
 result_dir = './result_Sony/'
 
@@ -22,14 +25,21 @@ if DEBUG == 1:
     save_freq = 2
     test_ids = test_ids[0:5]
 
+from functools import partialmethod
 
 def lrelu(x):
-    return tf.maximum(x * 0.2, x)
-
+    # return tf.maximum(x * 0.2, x)
+    # pred = x <= 0
+    # true_fn = lambda: x * 0.2
+    # false_fn = lambda: x
+    # return tf.cond(pred, true_fn, false_fn)
+    # return partialmethod(tf.nn.leaky_relu, alpha=0.2)
+    # return tf.identity(x)
+    return tf.nn.leaky_relu(x, alpha=0.2)
 
 def upsample_and_concat(x1, x2, output_channels, in_channels):
     pool_size = 2
-    deconv_filter = tf.Variable(tf.truncated_normal([pool_size, pool_size, output_channels, in_channels], stddev=0.02))
+    deconv_filter = tf.Variable(tf.random.truncated_normal([pool_size, pool_size, output_channels, in_channels], stddev=0.02))
     deconv = tf.nn.conv2d_transpose(x1, deconv_filter, tf.shape(x2), strides=[1, pool_size, pool_size, 1])
 
     deconv_output = tf.concat([deconv, x2], 3)
@@ -75,7 +85,7 @@ def network(input):
     conv9 = slim.conv2d(conv9, 32, [3, 3], rate=1, activation_fn=lrelu, scope='g_conv9_2')
 
     conv10 = slim.conv2d(conv9, 12, [1, 1], rate=1, activation_fn=None, scope='g_conv10')
-    out = tf.depth_to_space(conv10, 2)
+    out = tf.nn.depth_to_space(conv10, 2)
     return out
 
 
@@ -96,13 +106,14 @@ def pack_raw(raw):
     return out
 
 
-sess = tf.Session()
-in_image = tf.placeholder(tf.float32, [None, None, None, 4])
-gt_image = tf.placeholder(tf.float32, [None, None, None, 3])
+tf.compat.v1.disable_v2_behavior()
+sess = tf.compat.v1.Session()
+in_image = tf.compat.v1.placeholder(tf.float32, [None, None, None, 4])
+gt_image = tf.compat.v1.placeholder(tf.float32, [None, None, None, 3])
 out_image = network(in_image)
 
-saver = tf.train.Saver()
-sess.run(tf.global_variables_initializer())
+saver = tf.compat.v1.train.Saver()
+sess.run(tf.compat.v1.global_variables_initializer())
 ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
 if ckpt:
     print('loaded ' + ckpt.model_checkpoint_path)
@@ -111,7 +122,19 @@ if ckpt:
 if not os.path.isdir(result_dir + 'final/'):
     os.makedirs(result_dir + 'final/')
 
-for test_id in test_ids:
+''' create log_dir to allow tensorborad vbiew of checkpint '''
+# g = tf.Graph()
+# with g.as_default() as g:
+#     tf.compat.v1.train.import_meta_graph('./model.ckpt.meta')
+# with tf.compat.v1.Session(graph=g) as sess:
+#     file_writer = tf.compat.v1.summary.FileWriter(logdir='log_dir', graph=g)
+
+
+''' Save modified model ckot'''
+# saver.save(sess, 'check1/model.ckpt')
+
+from tqdm import tqdm
+for test_id in tqdm(test_ids, total=len(test_ids)):
     # test the first image in each sequence
     in_files = glob.glob(input_dir + '%05d_00*.ARW' % test_id)
     for k in range(len(in_files)):
@@ -147,9 +170,17 @@ for test_id in test_ids:
         scale_full = scale_full * np.mean(gt_full) / np.mean(
             scale_full)  # scale the low-light image to the same mean of the groundtruth
 
-        scipy.misc.toimage(output * 255, high=255, low=0, cmin=0, cmax=255).save(
+        from PIL import Image
+        Image.fromarray(np.array(output*255, dtype=np.uint8)).save(
             result_dir + 'final/%5d_00_%d_out.png' % (test_id, ratio))
-        scipy.misc.toimage(scale_full * 255, high=255, low=0, cmin=0, cmax=255).save(
+        Image.fromarray(np.array(scale_full*255, dtype=np.uint8)).save(
             result_dir + 'final/%5d_00_%d_scale.png' % (test_id, ratio))
-        scipy.misc.toimage(gt_full * 255, high=255, low=0, cmin=0, cmax=255).save(
+        Image.fromarray(np.array(gt_full*255, dtype=np.uint8)).save(
             result_dir + 'final/%5d_00_%d_gt.png' % (test_id, ratio))
+        
+        # scipy.misc.toimage(output * 255, high=255, low=0, cmin=0, cmax=255).save(
+        #     result_dir + 'final/%5d_00_%d_out.png' % (test_id, ratio))
+        # scipy.misc.toimage(scale_full * 255, high=255, low=0, cmin=0, cmax=255).save(
+        #     result_dir + 'final/%5d_00_%d_scale.png' % (test_id, ratio))
+        # scipy.misc.toimage(gt_full * 255, high=255, low=0, cmin=0, cmax=255).save(
+        #     result_dir + 'final/%5d_00_%d_gt.png' % (test_id, ratio))
