@@ -3,13 +3,18 @@
 from __future__ import division
 import os, time, scipy.io
 import tensorflow as tf
-import tensorflow.contrib.slim as slim
+# import tensorflow.contrib.slim as slim
+import tf_slim as slim
 import numpy as np
 import rawpy
 import glob
+from PIL import Image
+from tqdm import tqdm
 
-input_dir = './dataset/Sony/short/'
-gt_dir = './dataset/Sony/long/'
+# input_dir = './dataset/Sony/short/'
+# gt_dir = './dataset/Sony/long/'
+input_dir = '/data/data/datasets/SID/Sony/short/'
+gt_dir = '/data/data/datasets/SID/Sony/long/'
 checkpoint_dir = './result_Sony/'
 result_dir = './result_Sony/'
 
@@ -32,7 +37,7 @@ def lrelu(x):
 
 def upsample_and_concat(x1, x2, output_channels, in_channels):
     pool_size = 2
-    deconv_filter = tf.Variable(tf.truncated_normal([pool_size, pool_size, output_channels, in_channels], stddev=0.02))
+    deconv_filter = tf.Variable(tf.random.truncated_normal([pool_size, pool_size, output_channels, in_channels], stddev=0.02))
     deconv = tf.nn.conv2d_transpose(x1, deconv_filter, tf.shape(x2), strides=[1, pool_size, pool_size, 1])
 
     deconv_output = tf.concat([deconv, x2], 3)
@@ -78,7 +83,8 @@ def network(input):
     conv9 = slim.conv2d(conv9, 32, [3, 3], rate=1, activation_fn=lrelu, scope='g_conv9_2')
 
     conv10 = slim.conv2d(conv9, 12, [1, 1], rate=1, activation_fn=None, scope='g_conv10')
-    out = tf.depth_to_space(conv10, 2)
+    # out = tf.depth_to_space(conv10, 2)
+    out = tf.nn.depth_to_space(conv10, 2)
     return out
 
 
@@ -99,19 +105,20 @@ def pack_raw(raw):
     return out
 
 
-sess = tf.Session()
-in_image = tf.placeholder(tf.float32, [None, None, None, 4])
-gt_image = tf.placeholder(tf.float32, [None, None, None, 3])
+tf.compat.v1.disable_v2_behavior()
+sess = tf.compat.v1.Session()
+in_image = tf.compat.v1.placeholder(tf.float32, [None, None, None, 4])
+gt_image = tf.compat.v1.placeholder(tf.float32, [None, None, None, 3])
 out_image = network(in_image)
 
 G_loss = tf.reduce_mean(tf.abs(out_image - gt_image))
 
-t_vars = tf.trainable_variables()
-lr = tf.placeholder(tf.float32)
-G_opt = tf.train.AdamOptimizer(learning_rate=lr).minimize(G_loss)
+t_vars = tf.compat.v1.trainable_variables()
+lr = tf.compat.v1.placeholder(tf.float32)
+G_opt = tf.compat.v1.train.AdamOptimizer(learning_rate=lr).minimize(G_loss)
 
-saver = tf.train.Saver()
-sess.run(tf.global_variables_initializer())
+saver = tf.compat.v1.train.Saver()
+sess.run(tf.compat.v1.global_variables_initializer())
 ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
 if ckpt:
     print('loaded ' + ckpt.model_checkpoint_path)
@@ -132,14 +139,19 @@ for folder in allfolders:
     lastepoch = np.maximum(lastepoch, int(folder[-4:]))
 
 learning_rate = 1e-4
-for epoch in range(lastepoch, 4001):
+tot_epochs = 4001
+for epoch in range(lastepoch, tot_epochs):
     if os.path.isdir(result_dir + '%04d' % epoch):
         continue
     cnt = 0
     if epoch > 2000:
         learning_rate = 1e-5
 
-    for ind in np.random.permutation(len(train_ids)):
+    train_ids_perm = np.random.permutation(len(train_ids))
+    progress_bar = tqdm(train_ids_perm, desc=f"Epoch {epoch}/{tot_epochs}")#, unit="batch")
+    
+    # for ind in tqdm(train_ids_perm, total=len(train_ids_perm)):
+    for ind in progress_bar:
         # get the path from image id
         train_id = train_ids[ind]
         in_files = glob.glob(input_dir + '%05d_00*.ARW' % train_id)
@@ -190,14 +202,23 @@ for epoch in range(lastepoch, 4001):
         output = np.minimum(np.maximum(output, 0), 1)
         g_loss[ind] = G_current
 
-        print("%d %d Loss=%.3f Time=%.3f" % (epoch, cnt, np.mean(g_loss[np.where(g_loss)]), time.time() - st))
+
+        # print("%d %d Loss=%.3f Time=%.3f" % (epoch, cnt, np.mean(g_loss[np.where(g_loss)]), time.time() - st))
+        total_loss = np.mean(g_loss[np.where(g_loss)])
+        progress_bar.set_description(
+            f"Epoch {epoch}/{tot_epochs} - Batch: {cnt}, "
+            # f"Samples: {total_samples}, LR: {optimizer.learning_rate.numpy():.3e}, "
+            f"Loss: {total_loss:.4f}"
+        )
 
         if epoch % save_freq == 0:
             if not os.path.isdir(result_dir + '%04d' % epoch):
                 os.makedirs(result_dir + '%04d' % epoch)
 
             temp = np.concatenate((gt_patch[0, :, :, :], output[0, :, :, :]), axis=1)
-            scipy.misc.toimage(temp * 255, high=255, low=0, cmin=0, cmax=255).save(
+            # scipy.misc.toimage(temp * 255, high=255, low=0, cmin=0, cmax=255).save(
+            #     result_dir + '%04d/%05d_00_train_%d.jpg' % (epoch, train_id, ratio))
+            Image.fromarray(np.array(temp * 255, dtype=np.uint8)).save(
                 result_dir + '%04d/%05d_00_train_%d.jpg' % (epoch, train_id, ratio))
 
     saver.save(sess, checkpoint_dir + 'model.ckpt')

@@ -8,13 +8,18 @@ import tf_slim as slim
 import numpy as np
 import rawpy
 import glob
+from PIL import Image
 
 # input_dir = './dataset/Sony/short/'
 # gt_dir = './dataset/Sony/long/'
 input_dir = '/data/data/datasets/SID/Sony/short/'
 gt_dir = '/data/data/datasets/SID/Sony/long/'
-checkpoint_dir = './checkpoint/Sony/'
+# checkpoint_dir = './checkpoint/Sony/'
+checkpoint_dir = './results_Sony/'
 result_dir = './result_Sony/'
+
+# visualize = False
+visualize = True
 
 # get test IDs
 test_fns = glob.glob(gt_dir + '/1*.ARW')
@@ -26,6 +31,15 @@ if DEBUG == 1:
     test_ids = test_ids[0:5]
 
 from functools import partialmethod
+
+def PSNR(original, compressed): 
+    mse = np.mean((original - compressed) ** 2) 
+    if(mse == 0):  # MSE is zero means no noise is present in the signal . 
+                  # Therefore PSNR have no importance. 
+        return 100
+    max_pixel = 255.0
+    psnr = 20 * np.log10(max_pixel / np.sqrt(mse)) 
+    return psnr
 
 def lrelu(x):
     # return tf.maximum(x * 0.2, x)
@@ -119,8 +133,9 @@ if ckpt:
     print('loaded ' + ckpt.model_checkpoint_path)
     saver.restore(sess, ckpt.model_checkpoint_path)
 
-if not os.path.isdir(result_dir + 'final/'):
-    os.makedirs(result_dir + 'final/')
+if visualize:
+    if not os.path.isdir(result_dir + 'final/'):
+        os.makedirs(result_dir + 'final/')
 
 ''' create log_dir to allow tensorborad vbiew of checkpint '''
 # g = tf.Graph()
@@ -134,13 +149,15 @@ if not os.path.isdir(result_dir + 'final/'):
 # saver.save(sess, 'check1/model.ckpt')
 
 from tqdm import tqdm
+psnrs = []
+num_images = 0
 for test_id in tqdm(test_ids, total=len(test_ids)):
     # test the first image in each sequence
     in_files = glob.glob(input_dir + '%05d_00*.ARW' % test_id)
     for k in range(len(in_files)):
         in_path = in_files[k]
         in_fn = os.path.basename(in_path)
-        print(in_fn)
+        # print(in_fn)
         gt_files = glob.glob(gt_dir + '%05d_00*.ARW' % test_id)
         gt_path = gt_files[0]
         gt_fn = os.path.basename(gt_path)
@@ -170,13 +187,19 @@ for test_id in tqdm(test_ids, total=len(test_ids)):
         scale_full = scale_full * np.mean(gt_full) / np.mean(
             scale_full)  # scale the low-light image to the same mean of the groundtruth
 
-        from PIL import Image
-        Image.fromarray(np.array(output*255, dtype=np.uint8)).save(
-            result_dir + 'final/%5d_00_%d_out.png' % (test_id, ratio))
-        Image.fromarray(np.array(scale_full*255, dtype=np.uint8)).save(
-            result_dir + 'final/%5d_00_%d_scale.png' % (test_id, ratio))
-        Image.fromarray(np.array(gt_full*255, dtype=np.uint8)).save(
-            result_dir + 'final/%5d_00_%d_gt.png' % (test_id, ratio))
+        # psnr = tf.image.psnr(output, gt_full, max_val=1)
+        psnr = PSNR(np.array(output*255, dtype=np.uint8), np.array(gt_full*255, dtype=np.uint8))
+        psnrs.append(psnr)
+        num_images += 1
+        # print(f'PSNR = {psnr:.3f} dB')
+        
+        if visualize:
+            Image.fromarray(np.array(output*255, dtype=np.uint8)).save(
+                result_dir + 'final/%5d_00_%d_out.png' % (test_id, ratio))
+            Image.fromarray(np.array(scale_full*255, dtype=np.uint8)).save(
+                result_dir + 'final/%5d_00_%d_scale.png' % (test_id, ratio))
+            Image.fromarray(np.array(gt_full*255, dtype=np.uint8)).save(
+                result_dir + 'final/%5d_00_%d_gt.png' % (test_id, ratio))
         
         # scipy.misc.toimage(output * 255, high=255, low=0, cmin=0, cmax=255).save(
         #     result_dir + 'final/%5d_00_%d_out.png' % (test_id, ratio))
@@ -184,3 +207,4 @@ for test_id in tqdm(test_ids, total=len(test_ids)):
         #     result_dir + 'final/%5d_00_%d_scale.png' % (test_id, ratio))
         # scipy.misc.toimage(gt_full * 255, high=255, low=0, cmin=0, cmax=255).save(
         #     result_dir + 'final/%5d_00_%d_gt.png' % (test_id, ratio))
+print(f"\nMean PSNR ({num_images} images): {np.mean(psnrs):.3f} dB")
