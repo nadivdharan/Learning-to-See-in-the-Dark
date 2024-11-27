@@ -14,12 +14,12 @@ from PIL import Image
 # gt_dir = './dataset/Sony/long/'
 input_dir = '/data/data/datasets/SID/Sony/short/'
 gt_dir = '/data/data/datasets/SID/Sony/long/'
-# checkpoint_dir = './checkpoint/Sony/'
-checkpoint_dir = './results_Sony/'
+checkpoint_dir = './checkpoint/Sony/'
+# checkpoint_dir = './results_Sony/'
 result_dir = './result_Sony/'
 
-# visualize = False
-visualize = True
+visualize = False
+# visualize = True
 
 # get test IDs
 test_fns = glob.glob(gt_dir + '/1*.ARW')
@@ -146,6 +146,7 @@ if visualize:
 
 
 ''' Save modified model ckot'''
+import ipdb; ipdb.set_trace()
 # saver.save(sess, 'check1/model.ckpt')
 
 from tqdm import tqdm
@@ -188,7 +189,10 @@ for test_id in tqdm(test_ids, total=len(test_ids)):
             scale_full)  # scale the low-light image to the same mean of the groundtruth
 
         # psnr = tf.image.psnr(output, gt_full, max_val=1)
-        psnr = PSNR(np.array(output*255, dtype=np.uint8), np.array(gt_full*255, dtype=np.uint8))
+        psnr = PSNR(
+            np.array(output*255, dtype=np.uint8).astype(np.float32),
+            np.array(gt_full*255, dtype=np.uint8).astype(np.float32)
+        )
         psnrs.append(psnr)
         num_images += 1
         # print(f'PSNR = {psnr:.3f} dB')
